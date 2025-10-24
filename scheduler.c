@@ -3,67 +3,124 @@
 #include <string.h>
 #include <stdint.h>
 
-// Headers as needed
 
-const int SEED_VALUE = 200;  // Seed value for reading from file
+// GLOBAL VARIABLES --------------------------------------------------------------------------------------
+typedef enum {false, true} bool; // boolean type in C
+typedef enum {UNSTARTED, READY, RUNNING, BLOCKED, TERMINATED} State; // states of a process
 
-typedef enum {false, true} bool;        // Allows boolean types in C
+const int SEED_VALUE = 200;  // seed value for reading from file
 
-/* Defines a job struct */
+int TOTAL_CREATED_PROCESSES = 0;                // the total number of processes constructed
+int TOTAL_FINISHED_PROCESSES = 0;               // the total number of processes that have finished
+int CURRENT_CYCLE = 0;                          // the current cycle of the scheduler
+int TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED = 0;   // the total number of cycles spent in the blocked state
+
+// process struct
 typedef struct Process {
-    int A;                         // A: Arrival time of the process
-    int B;                         // B: Upper Bound of CPU burst times of the given random integer list
-    int C;                         // C: Total CPU time required
-    int M;                         // M: Multiplier of CPU burst time
-    int processID;                 // The process ID given upon input read
-    int currentCPUTimeRun;        // The current amount of CPU time the process has run for
-    int currentIOBlockedTime;     // The current amount of time the process has
-    int currentWaitingTime;       // The current amount of time the process has spent waiting
-    int finishingTime;            // The time the process finished
-    int currentCPUBurst;          // The current CPU burst time remaining
-    int currentIOBurst;           // The current IO burst time remaining
+    int processID;                // the process ID given upon input read
+    int arrival;                  // A: Arrival time of the process
+    int upperBound;               // B: Upper Bound of CPU burst times of the given random integer list
+    int cpuTime;                  // C: Total CPU time required
+    int multiplier;               // M: Multiplier of CPU burst time
 
-    // Add other fields as needed
+    int cpuBurst;                 // total CPU time required, from random function
+    int ioBurst;                  // total IO time required, cpuTime * multiplier
+
+    State currentState;           // The current state of the process
+
+    int remainingCPUBurst;        // the current CPU burst time remaining
+    int remainingIOBurst;         // the current IO burst time remaining
+    int currentWaitingTime;       // the current amount of time the process has spent waiting
+
+
+    int totalCPURunTime;          // the total amount of time the process has spent running on the CPU
+    int totalIOBlockedTime;       // the total amount of time the process has spent blocked for IO
+    int totalWaitingTime;         // the total amount of time the process has spent waiting
+
+    int finishingTime;            // the time the process finished
 } _process;
 
-int TOTAL_CREATED_PROCESSES = 0;   // The total number of processes constructed
 
-int TOTAL_FINISHED_PROCESSES = 0;  // The total number of processes that have finished
+// FUNCTION PROTOTYPES -----------------------------------------------------------------------------------
+int randomOS(int upper_bound, int process_indx, FILE* random_num_file_ptr);
+uint32_t getRandNumFromFile(uint32_t line, FILE* random_num_file_ptr);
 
-int CURRENT_CYCLE = 0;             // The current cycle of the scheduler
+void run_fcfs(_process process_list[], _process finished_process_list[]);
 
-int TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED = 0; // The total number of cycles spent in the blocked state
+void printInput(_process process_list[]);
+void printFinal(_process finished_process_list[]);
+void printProcessSpecifics(_process process_list[]);
+void printSummaryData(_process process_list[]);
 
-// Additional variables as needed
 
+// MAIN FUNCTION -----------------------------------------------------------------------------------------
 
-
-// reads a random non-negative integer X from a file with a given line named random-numbers (in the current directory)
-int getRandNumFromFile(int line, FILE* random_num_file_ptr){
-    int end, loop;
-    char str[512];
-
-    rewind(random_num_file_ptr); // reset to be beginning
-    for(end = loop = 0;loop<line;++loop){
-        if(0==fgets(str, sizeof(str), random_num_file_ptr)){ //include '\n'
-            end = 1;  //can't input (EOF)
-            break;
-        }
-    }
-    if(!end) {
-        return (int) atoi(str);
+// argc is the number of command line arguments
+// argv is an array of strings (char pointers) representing the command line arguments
+// argv[0] is the name of the program, argv[1] is the first command line argument, argv[2] is the second, etc.
+int main(int argc, char *argv[])
+{
+    // ensure proper command line arguments
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <input_file>\n", argv[0]); // fprintf allows us to print to stderr instead of stdout
+        return 1;
     }
 
-    // fail-safe return
-    return (int) 1804289383;
+    // open the input file
+    char *input_file = argv[1];
+    FILE *file_ptr = fopen(input_file, "r");
+    if (file_ptr == NULL) {
+        fprintf(stderr, "Error: Could not open file %s\n", input_file);
+        return 1;
+    }
+
+    fscanf(file_ptr, "%d", &TOTAL_CREATED_PROCESSES); // read the number of processes from the file
+    _process process_list[TOTAL_CREATED_PROCESSES]; // array to hold the processes
+    _process finished_process_list[TOTAL_CREATED_PROCESSES]; // array to hold the finished processes
+
+    // read the processes from the file
+    for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+        fscanf(file_ptr, " (%d %d %d %d)", &process_list[i].arrival, &process_list[i].upperBound,
+            &process_list[i].cpuTime, &process_list[i].multiplier);
+        process_list[i].processID = i;
+    }
+
+    fclose(file_ptr);
+    printInput(process_list);
+    
+    // pull random numbers for CPU bursts
+    char *random_file = "random-numbers";
+    file_ptr = fopen(random_file, "r");
+    if (file_ptr == NULL) {
+        fprintf(stderr, "Error: Could not open file %s\n", random_file);
+        return 1;
+    }
+    for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+        int random_number = randomOS(process_list[i].upperBound, i, file_ptr);
+        printf("Process %d random number: %d\n", i, random_number);
+        process_list[i].cpuBurst = random_number;
+        process_list[i].ioBurst = process_list[i].cpuBurst * process_list[i].multiplier;
+    }
+    fclose(file_ptr);
+
+    // run the FCFS scheduling simulation
+    printf("\n-------------------------------- FCFS Scheduler --------------------------------\n");
+    printInput(process_list);
+    run_fcfs(process_list, finished_process_list);
+    printFinal(finished_process_list);
+    printProcessSpecifics(process_list);
+    printSummaryData(process_list);
+    printf("------------------------------------------------------------------------------------\n");
+
+    return 0;
 }
 
 
+// FUNCTION DEFINITIONS ----------------------------------------------------------------------------------
 
-/**
- * Reads a random non-negative integer X from a file named random-numbers.
- * Returns the CPU Burst: : 1 + (random-number-from-file % upper_bound)
- */
+
+// reads a random non-negative integer X from a file named random-numbers
+// returns the CPU Burst: : 1 + (random-number-from-file % upper_bound)
 int randomOS(int upper_bound, int process_indx, FILE* random_num_file_ptr)
 {
     char str[20];
@@ -74,34 +131,185 @@ int randomOS(int upper_bound, int process_indx, FILE* random_num_file_ptr)
     return returnValue;
 } 
 
+// helper function for randomOS
+// gets the random number from the file at the specified line
+uint32_t getRandNumFromFile(uint32_t line, FILE* random_num_file_ptr){
+    uint32_t end, loop;
+    char str[512];
 
-/********************* SOME PRINTING HELPERS *********************/
+    rewind(random_num_file_ptr); // reset to be beginning
+    for(end = loop = 0;loop<line;++loop){
+        if(0==fgets(str, sizeof(str), random_num_file_ptr)){ //include '\n'
+            end = 1;  //can't input (EOF)
+            break;
+        }
+    }
+    if(!end) {
+        return (uint32_t) atoi(str);
+    }
 
+    // Fail-safe return
+    return (uint32_t) 1804289383;
+}
 
+/// FCFS scheduler
+void run_fcfs(_process process_list[], _process finished_process_list[])
+{
+    // set defaults
+    TOTAL_FINISHED_PROCESSES = 0;
+    TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED = 0;
+    for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+        process_list[i].currentState = UNSTARTED;
+        process_list[i].remainingCPUBurst = process_list[i].cpuBurst;
+        process_list[i].remainingIOBurst = process_list[i].ioBurst;
+        process_list[i].currentWaitingTime = 0;
+        process_list[i].totalCPURunTime = 0;
+        process_list[i].totalIOBlockedTime = 0;
+        process_list[i].totalWaitingTime = 0;
+        process_list[i].finishingTime = 0;
+    }
 
-void printInput(_process process_list[]);
+    printf("\nStarting Simulation...\n");
+    CURRENT_CYCLE = 0;
 
-/**
- * Prints to standard output the final output
- * finished_process_list is the terminated processes (in array form) in the order they each finished in.
- */
+    while(TOTAL_FINISHED_PROCESSES < TOTAL_CREATED_PROCESSES) {
+
+        printf("Cycle %d ------------------------------------\n", CURRENT_CYCLE);
+
+        // check for new arrivals
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            if (process_list[i].arrival == CURRENT_CYCLE) {
+                process_list[i].currentState = READY;
+                process_list[i].currentWaitingTime = 0;
+            }
+        }
+
+        // check blocked processes
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            if (process_list[i].currentState == BLOCKED) {
+                if (process_list[i].remainingIOBurst == 0) {
+                    process_list[i].currentState = READY;
+                    process_list[i].currentWaitingTime = 0;
+                }
+            }
+        }
+
+        // check running process and possibly start different process
+        bool running_process = false;
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            if (process_list[i].currentState == RUNNING) {
+                if (process_list[i].totalCPURunTime == process_list[i].cpuTime) {
+                    process_list[i].currentState = TERMINATED;
+                    process_list[i].finishingTime = CURRENT_CYCLE;
+                    // record the finished process in order
+                    finished_process_list[TOTAL_FINISHED_PROCESSES] = process_list[i];
+                    TOTAL_FINISHED_PROCESSES++;
+                    running_process = false;
+                    break;
+                }
+                if (process_list[i].remainingCPUBurst == 0) {
+                    process_list[i].currentState = BLOCKED;
+                    process_list[i].remainingIOBurst = process_list[i].ioBurst;
+                    running_process = false;
+                    break;
+                }
+                running_process = true;
+                break;
+            }
+        }
+        if (!running_process) {
+            // choose the READY process that has been waiting the longest (FCFS)
+            int chosen_idx = -1;
+            int max_wait = -1;
+            for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+                if (process_list[i].currentState == READY) {
+                    int wait = process_list[i].currentWaitingTime;
+                    if (wait > max_wait) {
+                        max_wait = wait;
+                        chosen_idx = i;
+                    } else if (wait == max_wait && chosen_idx != -1) {
+                        // tie-breaker: prefer lower processID
+                        if (process_list[i].processID < process_list[chosen_idx].processID) {
+                            chosen_idx = i;
+                        }
+                    }
+                }
+            }
+
+            if (chosen_idx != -1) {
+                process_list[chosen_idx].currentState = RUNNING;
+                process_list[chosen_idx].remainingCPUBurst = process_list[chosen_idx].cpuBurst;
+            }
+        }
+
+        // print states of all processes
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            const char* state_str;
+            switch (process_list[i].currentState) {
+                case UNSTARTED: state_str = "UNSTARTED"; break;
+                case READY: state_str = "READY"; break;
+                case RUNNING: state_str = "RUNNING"; break;
+                case BLOCKED: state_str = "BLOCKED"; break;
+                case TERMINATED: state_str = "TERMINATED"; break;
+                default: state_str = "UNKNOWN"; break;
+            }
+            printf("Process %d: %s\n", i, state_str);
+        }
+
+        // process state varible updates
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            if (process_list[i].currentState == RUNNING) {
+                process_list[i].totalCPURunTime++;
+                process_list[i].remainingCPUBurst--;
+            }
+            else if (process_list[i].currentState == BLOCKED) {
+                process_list[i].totalIOBlockedTime++;
+                process_list[i].remainingIOBurst--;
+                TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED++;
+            }
+            else if (process_list[i].currentState == READY) {
+                process_list[i].currentWaitingTime++;
+                process_list[i].totalWaitingTime++;
+            }
+        }
+
+        // increment cycle
+        CURRENT_CYCLE++;
+    }
+    printf("---------------------------\nFCFS Scheduling Simulation Ended.\n");
+}
+
+// prints the original input to standard out
+void printInput(_process process_list[])
+{
+    printf("Input: %i", TOTAL_CREATED_PROCESSES);
+
+    int i = 0;
+    for (; i < TOTAL_CREATED_PROCESSES; ++i)
+    {
+        printf(" (%d %d %d %d)", process_list[i].arrival, process_list[i].upperBound,
+            process_list[i].cpuTime, process_list[i].multiplier);
+    }
+    printf("\n");
+}
+
+// prints to standard output the final output
+// finished_process_list is the terminated processes (in array form) in the order they each finished in
 void printFinal(_process finished_process_list[])
 {
-    printf("The (sorted) input is: %i", TOTAL_CREATED_PROCESSES);
+    printf("\nThe (sorted) input is: %i", TOTAL_CREATED_PROCESSES);
 
     int i = 0;
     for (; i < TOTAL_FINISHED_PROCESSES; ++i)
     {
-        printf(" ( %i %i %i %i)", finished_process_list[i].A, finished_process_list[i].B,
-               finished_process_list[i].C, finished_process_list[i].M);
+        printf(" ( %i %i %i %i)", finished_process_list[i].arrival, finished_process_list[i].upperBound,
+               finished_process_list[i].cpuTime, finished_process_list[i].multiplier);
     }
     printf("\n");
-} // End of the print final function
+}
 
-/**
- * Prints out specifics for each process  (helper function, you may need to adjust variables accordingly)
- * @param process_list The original processes inputted, in array form
- */
+// prints out specifics for each process  (helper function, you may need to adjust variables accordingly)
+// @param process_list The original processes inputted, in array form
 void printProcessSpecifics(_process process_list[])
 {
     int i = 0;
@@ -109,20 +317,17 @@ void printProcessSpecifics(_process process_list[])
     for (; i < TOTAL_CREATED_PROCESSES; ++i)
     {
         printf("Process %i:\n", process_list[i].processID);
-        printf("\t(A,B,C,M) = (%i,%i,%i,%i)\n", process_list[i].A, process_list[i].B,
-               process_list[i].C, process_list[i].M);
+        printf("\t(A,B,C,M) = (%i,%i,%i,%i)\n", process_list[i].arrival, process_list[i].upperBound,
+               process_list[i].cpuTime, process_list[i].multiplier);
         printf("\tFinishing time: %i\n", process_list[i].finishingTime);
-        printf("\tTurnaround time: %i\n", process_list[i].finishingTime - process_list[i].A);
-        printf("\tI/O time: %i\n", process_list[i].currentIOBlockedTime);
-        printf("\tWaiting time: %i\n", process_list[i].currentWaitingTime);
+        printf("\tTurnaround time: %i\n", process_list[i].finishingTime - process_list[i].arrival);
+        printf("\tI/O time: %i\n", process_list[i].totalIOBlockedTime);
+        printf("\tWaiting time: %i\n", process_list[i].totalWaitingTime);
         printf("\n");
     }
-} // End of the print process specifics function
+}
 
-/**
- * Prints out the summary data (helper function, you may need to adjust variables accordingly)
- * process_list The original processes inputted in array form
- */
+// prints out the summary data (helper function, you may need to adjust variables accordingly)
 void printSummaryData(_process process_list[])
 {
     int i = 0;
@@ -133,10 +338,10 @@ void printSummaryData(_process process_list[])
     int final_finishing_time = CURRENT_CYCLE - 1;
     for (; i < TOTAL_CREATED_PROCESSES; ++i)
     {
-        total_amount_of_time_utilizing_cpu += process_list[i].currentCPUTimeRun;
-        total_amount_of_time_io_blocked += process_list[i].currentIOBlockedTime;
-        total_amount_of_time_spent_waiting += process_list[i].currentWaitingTime;
-        total_turnaround_time += (process_list[i].finishingTime - process_list[i].A);
+        total_amount_of_time_utilizing_cpu += process_list[i].totalCPURunTime;
+        total_amount_of_time_io_blocked += process_list[i].totalIOBlockedTime;
+        total_amount_of_time_spent_waiting += process_list[i].totalWaitingTime;
+        total_turnaround_time += (process_list[i].finishingTime - process_list[i].arrival);
     }
 
     // Calculates the CPU utilisation
@@ -161,66 +366,4 @@ void printSummaryData(_process process_list[])
     printf("\tThroughput: %6f processes per hundred cycles\n", throughput);
     printf("\tAverage turnaround time: %6f\n", avg_turnaround_time);
     printf("\tAverage waiting time: %6f\n", avg_waiting_time);
-} // End of the print summary data function
-
-
-// argc is the number of command line arguments
-// argv is an array of strings (char pointers) representing the command line arguments
-// argv[0] is the name of the program, argv[1] is the first command line argument, argv[2] is the second, etc.
-int main(int argc, char *argv[])
-{
-
-    // ensure proper command line arguments
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <input_file>\n", argv[0]); // fprintf allows us to print to stderr instead of stdout
-        return 1;
-    }
-
-    // open the input file
-    char *input_file = argv[1];
-    FILE *file_ptr = fopen(input_file, "r");
-    if (file_ptr == NULL) {
-        fprintf(stderr, "Error: Could not open file %s\n", input_file);
-        return 1;
-    }
-
-    fscanf(file_ptr, "%d", &TOTAL_CREATED_PROCESSES); // read the number of processes from the file
-    _process process_list[TOTAL_CREATED_PROCESSES]; // array to hold the processes
-
-    // read the processes from the file
-    for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
-        fscanf(file_ptr, " (%d %d %d %d)", &process_list[i].A, &process_list[i].B, &process_list[i].C, &process_list[i].M);
-        process_list[i].processID = i;
-    }
-
-    fclose(file_ptr);
-    printInput(process_list);
-    
-
-
-
-
-
-
-
-
-
-    printf("Success!\n");
-    return 0;
-}
-
-// FUNCTION DEFINITIONS ---------------------------------------------------------------------------------
-
-// prints to standard output the original input
-void printInput(_process process_list[])
-{
-    printf("\nInput: %i", TOTAL_CREATED_PROCESSES);
-
-    int i = 0;
-    for (; i < TOTAL_CREATED_PROCESSES; ++i)
-    {
-        printf(" (%d %d %d %d)", process_list[i].A, process_list[i].B,
-               process_list[i].C, process_list[i].M);
-    }
-    printf("\n");
 }
