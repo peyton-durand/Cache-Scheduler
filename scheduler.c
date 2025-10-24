@@ -3,7 +3,6 @@
 #include <string.h>
 #include <stdint.h>
 
-
 // GLOBAL VARIABLES --------------------------------------------------------------------------------------
 typedef enum {false, true} bool; // boolean type in C
 typedef enum {UNSTARTED, READY, RUNNING, BLOCKED, TERMINATED} State; // states of a process
@@ -24,14 +23,14 @@ typedef struct Process {
     int multiplier;               // M: Multiplier of CPU burst time
 
     int cpuBurst;                 // total CPU time required, from random function
-    int ioBurst;                  // total IO time required, cpuTime * multiplier
+    int ioBurst;                  // total IO time required, cpuBurst * multiplier
 
     State currentState;           // The current state of the process
 
     int remainingCPUBurst;        // the current CPU burst time remaining
     int remainingIOBurst;         // the current IO burst time remaining
     int currentWaitingTime;       // the current amount of time the process has spent waiting
-
+    int currentCPURunTime;        // the current amount of time the process has spent running on the CPU
 
     int totalCPURunTime;          // the total amount of time the process has spent running on the CPU
     int totalIOBlockedTime;       // the total amount of time the process has spent blocked for IO
@@ -46,6 +45,8 @@ int randomOS(int upper_bound, int process_indx, FILE* random_num_file_ptr);
 uint32_t getRandNumFromFile(uint32_t line, FILE* random_num_file_ptr);
 
 void run_fcfs(_process process_list[], _process finished_process_list[]);
+void run_rr(_process process_list[], _process finished_process_list[]);
+void run_sjf(_process process_list[], _process finished_process_list[]);
 
 void printInput(_process process_list[]);
 void printFinal(_process finished_process_list[]);
@@ -103,14 +104,48 @@ int main(int argc, char *argv[])
     }
     fclose(file_ptr);
 
-    // run the FCFS scheduling simulation
+    // duplicate process_list for each scheduling algorithm
+    _process process_list_copy1[TOTAL_CREATED_PROCESSES];
+    _process process_list_copy2[TOTAL_CREATED_PROCESSES];
+    memcpy(process_list_copy1, process_list, sizeof(process_list));
+    memcpy(process_list_copy2, process_list, sizeof(process_list));
+
+    // run the FCFS (First Come First Serve) scheduling simulation
     printf("\n-------------------------------- FCFS Scheduler --------------------------------\n");
     printInput(process_list);
     run_fcfs(process_list, finished_process_list);
     printFinal(finished_process_list);
     printProcessSpecifics(process_list);
     printSummaryData(process_list);
-    printf("------------------------------------------------------------------------------------\n");
+    printf("--------------------------------------------------------------------------------");
+
+    // reset globals
+    TOTAL_FINISHED_PROCESSES = 0;
+    CURRENT_CYCLE = 0;
+    TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED = 0;
+
+    // run the RR (Round Robin) scheduling simulation
+    printf("\n-------------------------------- RR Scheduler ----------------------------------\n");
+    printInput(process_list_copy1);
+    run_rr(process_list_copy1, finished_process_list);
+    printFinal(finished_process_list);
+    printProcessSpecifics(process_list_copy1);
+    printSummaryData(process_list_copy1);
+    printf("--------------------------------------------------------------------------------");
+
+    // reset globals
+    TOTAL_FINISHED_PROCESSES = 0;
+    CURRENT_CYCLE = 0;
+    TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED = 0;
+
+    // run the SJF (Shortest Job First) scheduling simulation
+    printf("\n-------------------------------- SJF Scheduler ---------------------------------\n");
+    printInput(process_list_copy2);
+    run_sjf(process_list_copy2, finished_process_list);
+    printFinal(finished_process_list);
+    printProcessSpecifics(process_list_copy2);
+    printSummaryData(process_list_copy2);
+    printf("--------------------------------------------------------------------------------\n\n");
 
     return 0;
 }
@@ -152,7 +187,7 @@ uint32_t getRandNumFromFile(uint32_t line, FILE* random_num_file_ptr){
     return (uint32_t) 1804289383;
 }
 
-/// FCFS scheduler
+// FCFS scheduler
 void run_fcfs(_process process_list[], _process finished_process_list[])
 {
     // set defaults
@@ -163,6 +198,7 @@ void run_fcfs(_process process_list[], _process finished_process_list[])
         process_list[i].remainingCPUBurst = process_list[i].cpuBurst;
         process_list[i].remainingIOBurst = process_list[i].ioBurst;
         process_list[i].currentWaitingTime = 0;
+        process_list[i].currentCPURunTime = 0;
         process_list[i].totalCPURunTime = 0;
         process_list[i].totalIOBlockedTime = 0;
         process_list[i].totalWaitingTime = 0;
@@ -218,7 +254,7 @@ void run_fcfs(_process process_list[], _process finished_process_list[])
             }
         }
         if (!running_process) {
-            // choose the READY process that has been waiting the longest (FCFS)
+            // choose the READY process that has been waiting the longest
             int chosen_idx = -1;
             int max_wait = -1;
             for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
@@ -244,7 +280,7 @@ void run_fcfs(_process process_list[], _process finished_process_list[])
 
         // print states of all processes
         for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
-            const char* state_str;
+            char* state_str;
             switch (process_list[i].currentState) {
                 case UNSTARTED: state_str = "UNSTARTED"; break;
                 case READY: state_str = "READY"; break;
@@ -277,6 +313,272 @@ void run_fcfs(_process process_list[], _process finished_process_list[])
         CURRENT_CYCLE++;
     }
     printf("---------------------------\nFCFS Scheduling Simulation Ended.\n");
+}
+
+// RR scheduler
+void run_rr(_process process_list[], _process finished_process_list[])
+{
+    const int QUANTUM = 2;
+
+    // set defaults
+    TOTAL_FINISHED_PROCESSES = 0;
+    TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED = 0;
+    for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+        process_list[i].currentState = UNSTARTED;
+        process_list[i].remainingCPUBurst = process_list[i].cpuBurst;
+        process_list[i].remainingIOBurst = process_list[i].ioBurst;
+        process_list[i].currentWaitingTime = 0;
+        process_list[i].currentCPURunTime = 0;
+        process_list[i].totalCPURunTime = 0;
+        process_list[i].totalIOBlockedTime = 0;
+        process_list[i].totalWaitingTime = 0;
+        process_list[i].finishingTime = 0;
+    }
+
+    printf("\nStarting Simulation...\n");
+    CURRENT_CYCLE = 0;
+
+    while (TOTAL_FINISHED_PROCESSES < TOTAL_CREATED_PROCESSES) {
+
+        printf("Cycle %d ------------------------------------\n", CURRENT_CYCLE);
+
+        // check for new arrivals
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            if (process_list[i].arrival == CURRENT_CYCLE) {
+                process_list[i].currentState = READY;
+                process_list[i].currentWaitingTime = 0;
+            }
+        }
+
+        // check blocked processes
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            if (process_list[i].currentState == BLOCKED) {
+                if (process_list[i].remainingIOBurst == 0) {
+                    process_list[i].currentState = READY;
+                    process_list[i].currentWaitingTime = 0;
+                }
+            }
+        }
+
+        // check running process and possibly start different process
+        bool running_process = false;
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            if (process_list[i].currentState == RUNNING) {
+                if (process_list[i].totalCPURunTime == process_list[i].cpuTime) {
+                    process_list[i].currentState = TERMINATED;
+                    process_list[i].finishingTime = CURRENT_CYCLE;
+                    // record the finished process in order
+                    finished_process_list[TOTAL_FINISHED_PROCESSES] = process_list[i];
+                    TOTAL_FINISHED_PROCESSES++;
+                    running_process = false;
+                    break;
+                }
+                if (process_list[i].remainingCPUBurst == 0) {
+                    process_list[i].currentState = BLOCKED;
+                    process_list[i].remainingIOBurst = process_list[i].ioBurst;
+                    running_process = false;
+                    break;
+                }
+                if (process_list[i].currentCPURunTime == QUANTUM) {
+                    process_list[i].currentState = READY;
+                    process_list[i].currentWaitingTime = 0;
+                    running_process = false;
+                    break;
+                }
+                running_process = true;
+                break;
+            }
+        }
+        if (!running_process) {
+            // choose the READY process that has been waiting the longest
+            int chosen_idx = -1;
+            int max_wait = -1;
+            for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+                if (process_list[i].currentState == READY) {
+                    int wait = process_list[i].currentWaitingTime;
+                    if (wait > max_wait) {
+                        max_wait = wait;
+                        chosen_idx = i;
+                    } else if (wait == max_wait && chosen_idx != -1) {
+                        // tie-breaker: prefer lower processID
+                        if (process_list[i].processID < process_list[chosen_idx].processID) {
+                            chosen_idx = i;
+                        }
+                    }
+                }
+            }
+
+            if (chosen_idx != -1) {
+                process_list[chosen_idx].currentState = RUNNING;
+                process_list[chosen_idx].remainingCPUBurst = process_list[chosen_idx].cpuBurst;
+            }
+        }
+
+        // print states of all processes
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            char* state_str;
+            switch (process_list[i].currentState) {
+                case UNSTARTED: state_str = "UNSTARTED"; break;
+                case READY: state_str = "READY"; break;
+                case RUNNING: state_str = "RUNNING"; break;
+                case BLOCKED: state_str = "BLOCKED"; break;
+                case TERMINATED: state_str = "TERMINATED"; break;
+                default: state_str = "UNKNOWN"; break;
+            }
+            printf("Process %d: %s\n", i, state_str);
+        }
+
+        // process state varible updates
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            if (process_list[i].currentState == RUNNING) {
+                process_list[i].totalCPURunTime++;
+                process_list[i].remainingCPUBurst--;
+            }
+            else if (process_list[i].currentState == BLOCKED) {
+                process_list[i].totalIOBlockedTime++;
+                process_list[i].remainingIOBurst--;
+                TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED++;
+            }
+            else if (process_list[i].currentState == READY) {
+                process_list[i].currentWaitingTime++;
+                process_list[i].totalWaitingTime++;
+            }
+        }
+
+        // increment cycle
+        CURRENT_CYCLE++;
+    }
+
+    printf("---------------------------\nRR Scheduling Simulation Ended.\n");
+}
+
+// SJF scheduler
+void run_sjf(_process process_list[], _process finished_process_list[])
+{
+    // set defaults
+    TOTAL_FINISHED_PROCESSES = 0;
+    TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED = 0;
+    for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+        process_list[i].currentState = UNSTARTED;
+        process_list[i].remainingCPUBurst = process_list[i].cpuBurst;
+        process_list[i].remainingIOBurst = process_list[i].ioBurst;
+        process_list[i].currentWaitingTime = 0;
+        process_list[i].currentCPURunTime = 0;
+        process_list[i].totalCPURunTime = 0;
+        process_list[i].totalIOBlockedTime = 0;
+        process_list[i].totalWaitingTime = 0;
+        process_list[i].finishingTime = 0;
+    }
+
+    printf("\nStarting Simulation...\n");
+    CURRENT_CYCLE = 0;
+
+    while (TOTAL_FINISHED_PROCESSES < TOTAL_CREATED_PROCESSES) {
+
+        printf("Cycle %d ------------------------------------\n", CURRENT_CYCLE);
+
+        // check for new arrivals
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            if (process_list[i].arrival == CURRENT_CYCLE) {
+                process_list[i].currentState = READY;
+                process_list[i].currentWaitingTime = 0;
+            }
+        }
+
+        // check blocked processes
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            if (process_list[i].currentState == BLOCKED) {
+                if (process_list[i].remainingIOBurst == 0) {
+                    process_list[i].currentState = READY;
+                    process_list[i].currentWaitingTime = 0;
+                }
+            }
+        }
+
+        // check running process and possibly start different process
+        bool running_process = false;
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            if (process_list[i].currentState == RUNNING) {
+                if (process_list[i].totalCPURunTime == process_list[i].cpuTime) {
+                    process_list[i].currentState = TERMINATED;
+                    process_list[i].finishingTime = CURRENT_CYCLE;
+                    // record the finished process in order
+                    finished_process_list[TOTAL_FINISHED_PROCESSES] = process_list[i];
+                    TOTAL_FINISHED_PROCESSES++;
+                    running_process = false;
+                    break;
+                }
+                if (process_list[i].remainingCPUBurst == 0) {
+                    process_list[i].currentState = BLOCKED;
+                    process_list[i].remainingIOBurst = process_list[i].ioBurst;
+                    running_process = false;
+                    break;
+                }
+
+                running_process = true;              
+                break;
+            }
+        }
+        if (!running_process) {
+            // choose the READY process that has the shortest time left
+            int chosen_idx = -1;
+            int shortest_time = 9999999;
+            for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+                if (process_list[i].currentState == READY) {
+                    int remaining_cpu_time = process_list[i].cpuTime - process_list[i].totalCPURunTime;
+                    if (remaining_cpu_time < shortest_time) {
+                        shortest_time = remaining_cpu_time;
+                        chosen_idx = i;
+                    } else if (remaining_cpu_time == shortest_time && chosen_idx != -1) {
+                        // tie-breaker: prefer lower processID
+                        if (process_list[i].processID < process_list[chosen_idx].processID) {
+                            chosen_idx = i;
+                        }
+                    }
+                }
+            }
+            if (chosen_idx != -1) {
+                process_list[chosen_idx].currentState = RUNNING;
+                process_list[chosen_idx].remainingCPUBurst = process_list[chosen_idx].cpuBurst;
+            }
+        }
+
+        // print states of all processes
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            char* state_str;
+            switch (process_list[i].currentState) {
+                case UNSTARTED: state_str = "UNSTARTED"; break;
+                case READY: state_str = "READY"; break;
+                case RUNNING: state_str = "RUNNING"; break;
+                case BLOCKED: state_str = "BLOCKED"; break;
+                case TERMINATED: state_str = "TERMINATED"; break;
+                default: state_str = "UNKNOWN"; break;
+            }
+            printf("Process %d: %s\n", i, state_str);
+        }
+
+        // process state varible updates
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++) {
+            if (process_list[i].currentState == RUNNING) {
+                process_list[i].totalCPURunTime++;
+                process_list[i].remainingCPUBurst--;
+            }
+            else if (process_list[i].currentState == BLOCKED) {
+                process_list[i].totalIOBlockedTime++;
+                process_list[i].remainingIOBurst--;
+                TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED++;
+            }
+            else if (process_list[i].currentState == READY) {
+                process_list[i].currentWaitingTime++;
+                process_list[i].totalWaitingTime++;
+            }
+        }
+
+        // increment cycle
+        CURRENT_CYCLE++;
+    }
+
+    printf("---------------------------\nSJF Scheduling Simulation Ended.\n");
 }
 
 // prints the original input to standard out
